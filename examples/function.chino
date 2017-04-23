@@ -1,0 +1,6 @@
+int sum(int x, int y) {
+  return x + y;
+}
+
+puts(sum(1, 2));
+# puts(sum(1, "2")); # type error

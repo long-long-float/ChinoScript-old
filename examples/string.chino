@@ -1,0 +1,9 @@
+string str = "hello";
+
+puts(len(str)); # => 5
+
+append(str, '!');
+puts(str); # => hello!
+
+str[5] = '?';
+puts(str); # => hello?

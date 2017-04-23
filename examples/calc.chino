@@ -1,0 +1,94 @@
+int atoi(string str) {
+  int result = 0;
+  int weight = 1;
+  int zero = ctoi('0');
+  for (int i = len(str) - 1 ; i >= 0 ; i -= 1) {
+    result += (ctoi(str[i]) - zero) * weight;
+    weight *= 10;
+  }
+  return result;
+}
+
+int pos = 0;
+string expr = "";
+
+bool cur_is_digit() {
+  if (pos >= len(expr)) return false;
+
+  int value = ctoi(expr[pos]);
+  return ctoi('0') <= value && value <= ctoi('9');
+}
+
+int consume_int() {
+  string value = "";
+  while (cur_is_digit()) {
+    append(value, expr[pos]);
+    pos += 1;
+  }
+  return atoi(value);
+}
+
+void consume(char ch) {
+  pos += 1;
+}
+
+bool cur_is(char ch) {
+  return pos < len(expr) && expr[pos] == ch;
+}
+
+int calc(string str) {
+  expr = str;
+  pos = 0;
+  return calc_expr1();
+}
+
+# expr1 : expr2 "+" expr1
+#       / expr2
+int calc_expr1() {
+  int l = calc_expr2();
+  if (cur_is('+')) {
+    consume('+');
+    int r = calc_expr1();
+    return l + r;
+  } else if (cur_is('-')) {
+    consume('-');
+    int r = calc_expr1();
+    return l - r;
+  } else {
+    return l;
+  }
+}
+
+# expr2 : factor "*" expr2
+#       / factor
+int calc_expr2() {
+  int l = calc_factor();
+  if (cur_is('*')) {
+    consume('*');
+    int r = calc_expr2();
+    return l * r;
+  } else if (cur_is('/')) {
+    consume('/');
+    int r = calc_expr2();
+    return l / r;
+  } else {
+    return l;
+  }
+}
+
+# factor : "(" expr1 ")"
+#        / integer
+int calc_factor() {
+  if (cur_is('(')) {
+    consume('(');
+    int ret = calc_expr1();
+    consume(')');
+    return ret;
+  } else if (cur_is_digit()) {
+    return consume_int();
+  }
+}
+
+puts(calc("1+2-3"));       # => 0
+puts(calc("1*2+3*4"));     # => 14
+puts(calc("(1+2)*(3+4)")); # => 21

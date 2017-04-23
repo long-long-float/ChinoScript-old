@@ -1,0 +1,10 @@
+eternal int count = 0;
+# or
+# †eternal† int count = 0;
+int count2 = 0;
+
+count += 1;
+count2 += 1;
+
+puts(count);
+puts(count2);

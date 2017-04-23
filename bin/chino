@@ -1,0 +1,47 @@
+#!/usr/bin/env node
+
+var ChinoScript = require('../dest/main.js');
+var fs = require('fs');
+
+if(process.argv[2] == undefined) {
+  console.log('usage: chino FILE');
+}
+else {
+  var code = fs.readFileSync(process.argv[2]).toString();
+  var evaluator = new ChinoScript.Evaluator();
+
+  var c = ChinoScript.Shortcuts;
+  var int = c.type('Integer');
+  var void_ = c.type('Tuple', []);
+
+  c.define_fun(evaluator, int, [int, int], 'add', function(x, y) {
+    return c.int(x.value + y.value);
+  });
+
+  c.define_fun(evaluator, void_, [c.type('A')], 'p', function(value) {
+    console.log(value);
+    return c.unit;
+  }, ['A']);
+
+  try {
+    ChinoScript.evaluate(code, evaluator, false);
+  } catch (e) {
+    if (e.name === 'ChinoException' && e.location) {
+      var l = e.location.start;
+      var msg = e.message;
+      if (code) {
+        var line = code.split(/\r\n|\r|\n/);
+        var space = '';
+        for (var i = 0; i < l.column - 1; i++) { space += ' '; }
+        msg += `
+${line[l.line - 1]}
+${space + '^'}`;
+      }
+
+      console.log(msg);
+    } else {
+      throw e;
+    }
+  }
+}
+

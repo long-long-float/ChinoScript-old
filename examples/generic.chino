@@ -1,0 +1,19 @@
+bool eq<A>(A x, A y) {
+  return x == y;
+}
+
+bool arrayEq<A>(A[] x, A[] y) {
+  if (len(x) != len(y)) return false;
+
+  for (int i = 0; i < len(x); i += 1) {
+    if (x[i] != y[i]) return false;
+  }
+  return true;
+}
+
+puts(eq(1, 1));
+# puts(eq(1, "A")); # type error
+
+puts(arrayEq(int[]{1, 2, 3}, int[]{1, 2, 3}));
+puts(arrayEq(int[]{1, 2, 3}, int[]{1, 2, 4}));
+# puts(arrayEq(int[]{1, 2, 3}, char[]{'1', '2', '3'})); # type error
