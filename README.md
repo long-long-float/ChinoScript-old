@@ -11,6 +11,8 @@ Its features are
 * C like symtax
 * basic types(int, char, bool, array, tuple, function)
 * generic typed function
+* eternal variable
+    * An eternal variable is keeped even if program is finished.
 
 # Build
 
