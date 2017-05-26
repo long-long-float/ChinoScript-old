@@ -25,11 +25,11 @@ export function evaluate(code, evaluator = new Evaluator(), showAST = false) {
   const vmcode = (new Compiler()).compile(ast);
   console.log(require('util').inspect(vmcode, true, 10));
 
-  // evaluator.push_env();
-  // var retVal = evaluator.eval_stmts(ast);
-  // evaluator.pop_env();
-  //
-  // return retVal;
+  evaluator.push_env();
+  var retVal = evaluator.run(vmcode);
+  evaluator.pop_env();
+
+  return retVal;
 }
 
 export function return_(value) {
@@ -254,9 +254,10 @@ class Compiler {
   compile_expr(expr) {
     switch(expr.type) {
       case 'binary_op':
+        // TODO: = は assign にする
         this.compile_expr(expr.left);
         this.compile_expr(expr.right);
-        this.add_op({ type: 'binary_op', op: expr.op, left_indexed: expr.left_indexed })
+        this.add_op({ type: 'binary_op', op: expr.op, left_indexed: expr.left_indexed, location: expr.location })
 
         return;
 
@@ -267,7 +268,7 @@ class Compiler {
 
       case 'call_function':
         expr.args.forEach((arg) => this.compile_expr(arg));
-        this.add_op({ type: 'call_function', name: expr.name })
+        this.add_op({ type: 'call_function', name: expr.name, arguments_length: expr.args.length })
         return;
 
       case 'lh_expression':
@@ -305,6 +306,8 @@ export class Evaluator {
     this.eternals = new Environment(null, null, null);
     this.currentEnv = this.rootEnv = new Environment(this.eternals, this.consts, null);
 
+    this.stack = [];
+
     // define basic functions
     var s = Shortcuts;
     s.define_fun(this, s.type('Tuple', []), [s.type('A')], 'puts', function (value) {
@@ -341,42 +344,190 @@ export class Evaluator {
     this.currentEnv = this.currentEnv.parent;
   }
 
-  eval_stmts(stmts) {
-    for(var i = 0 ; i < stmts.length ; i++) {
-      var stmt = stmts[i];
+  run(vmcode) {
+    this.stack = [];
 
-      try {
-        this.eval_stmt(stmt);
-      } catch (e) {
-        if (e instanceof NonLocalExits) {
-          return e.value;
+    vmcode.forEach((func) => {
+      var argTypes = stmt.args.map((arg) => arg.var_type);
+      var ftype = new Values.Type('Function', [stmt.out_type].concat(argTypes));
+      var value = new Values.Function(stmt.block, stmt.out_type, argTypes, stmt.genericTypes, false, stmt.args);
+      this.currentEnv.add(ftype, stmt.name, value);
+    })
+
+    const code = vmcode.find((func) => func.name.value === '$main').code;
+
+    for (var pc = 0; pc < code.length; pc++) {
+      const op = code[pc];
+      switch (op) {
+        case 'eval':
+          this.stack.push(this.eval_stmt(op.expr));
+          return;
+
+        // stack: index(if left_indexed is true) right
+        // result: right value
+        case 'assign': {
+          const right  = this.stack.pop();
+          const target = this.currentEnv.getVariable(code.left.name);
+
+          if (code.left_indexed) {
+            const index = this.stack.pop();
+            // TODO: fix
+            if (!(new Values.Type('Integer')).isMatch(index.type)) {
+              throw new Errors.TypeError(`${index} must be Integer`, code.location);
+            }
+            if (!(new Values.Type('Array')).isMatch(target.type)) {
+              throw new Errors.TypeError(`${code.left.name} must be Array`, code.location);
+            }
+
+            if (!target.type.innerTypes[0].isMatch(right.type)) {
+              throw new Errors.TypeError(`type missmatch ${right.type} to ${target.type.innerTypes[0]}`, code.location);
+            }
+
+            const indexv = index.value;
+            target.value.validateIndex(indexv);
+            target.value.value[index.value] = right;
+          } else {
+            target.set(right, code.location);
+          }
+
+          this.stack.push(right);
+
+          break;
         }
+        // stack: right, left
+        // result: right op left
+        case 'binary_op': {
+          const right = this.stack.pop();
+          const left  = this.stack.pop();
 
-        throw e;
+          let result;
+          switch(expr.op) {
+            // TODO: 型チェック
+            case '>': result = new Values.Boolean(left.value > right.value); break;
+            case '<': result = new Values.Boolean(left.value < right.value); break;
+            case '&&': result = new Values.Boolean(left.value && right.value); break;
+            case '||': result = new Values.Boolean(left.value || right.value); break;
+            case '==': result = new Values.Boolean(left.value === right.value); break;
+            case '>=': result = new Values.Boolean(left.value >= right.value); break;
+            case '<=': result = new Values.Boolean(left.value <= right.value); break;
+            case '!=': result = new Values.Boolean(left.value !== right.value); break;
+
+            case '+': result = new Values.Integer(left.value + right.value); break;
+            case '-': result = new Values.Integer(left.value - right.value); break;
+            case '*': result = new Values.Integer(left.value * right.value); break;
+            case '/': result = new Values.Integer(left.value / right.value); break;
+            case '%': result = new Values.Integer(left.value % right.value); break;
+
+            default: throw `unknown op '${expr.op}'`
+          }
+          this.stack.push(result);
+          break;
+        }
+        // stack: right
+        // result: op right
+        case 'unary_op_f': {
+          const right = this.stack.pop();
+
+          let result;
+          switch(expr.op) {
+            case '+': result = right; break; // nothing to do
+            case '-': result = new Values.Integer(-right.value);
+          }
+          this.stack.push(result);
+          break;
+        }
+        // stack: 1st arg, 2nd arg, ...
+        // result: returned value by function
+        case 'call_function': {
+          // TODO: implement
+          break;
+          const args = expr.args.map((arg) => this.eval_expr(arg));
+
+          const name = code.name.value;
+          const fun = this.currentEnv.get(name);
+          // TODO: 関数であることの型チェック
+
+          try {
+            this.push_env();
+
+            var genericTypes = {};
+            fun.genericTypes.forEach((name) => genericTypes[name] = null);
+
+            for (var i = 0; i < fun.argTypes.length; i++) {
+              var at = fun.argTypes[i];
+
+              var typeName = new Values.Identifier(at.name);
+              if (!at.isMatch(args[i].type, genericTypes)) {
+                throw new Errors.TypeError(`${args[i]} must be ${at}`, args[i].location);
+              }
+            }
+
+            var result;
+            if (fun.isNative) {
+              result = fun.value.apply(null, args);
+            } else {
+              fun.argsDecl.forEach((arg, i) => {
+                var type = arg.var_type.replaceGenericTypes(genericTypes);
+                this.currentEnv.add(type, arg.value, args[i]);
+              });
+              result = this.eval_stmts(fun.value.stmts);
+            }
+
+            if (!(result instanceof Values.Value)) {
+              throw new Errors.ChinoException(`Bug: result of ${name.value}: ${result} is not Value`);
+            }
+
+            var resultType = fun.resultType.replaceGenericTypes(genericTypes);
+            if (!resultType.isMatch(result.type)) {
+              throw new Errors.TypeError(`the result ${result} must be ${fun.resultType}`, expr.location);
+            }
+
+          } finally {
+            this.pop_env();
+          }
+
+          return result;
+        }
       }
     }
-
-    return Shortcuts.unit;
   }
 
-  eval_block(block) {
-    this.push_env();
+  // eval_stmts(stmts) {
+  //   for(var i = 0 ; i < stmts.length ; i++) {
+  //     var stmt = stmts[i];
+  //
+  //     try {
+  //       this.eval_stmt(stmt);
+  //     } catch (e) {
+  //       if (e instanceof NonLocalExits) {
+  //         return e.value;
+  //       }
+  //
+  //       throw e;
+  //     }
+  //   }
+  //
+  //   return Shortcuts.unit;
+  // }
 
-    var stmts = block.stmts;
-    for(var i = 0 ; i < stmts.length ; i++) {
-      try {
-        this.eval_stmt(stmts[i]);
-      } catch (e) {
-        if (e instanceof NonLocalExits) {
-          this.pop_env();
-        }
-
-        throw e;
-      }
-    }
-
-    this.pop_env();
-  }
+  // eval_block(block) {
+  //   this.push_env();
+  //
+  //   var stmts = block.stmts;
+  //   for(var i = 0 ; i < stmts.length ; i++) {
+  //     try {
+  //       this.eval_stmt(stmts[i]);
+  //     } catch (e) {
+  //       if (e instanceof NonLocalExits) {
+  //         this.pop_env();
+  //       }
+  //
+  //       throw e;
+  //     }
+  //   }
+  //
+  //   this.pop_env();
+  // }
 
   eval_stmt(stmt) {
     if (stmt === null) return;
@@ -398,13 +549,6 @@ export class Evaluator {
         } else {
           this.currentEnv.add(stmt.var_type, stmt.name, init_value);
         }
-        break;
-      case 'def_fun':
-        var argTypes = stmt.args.map((arg) => arg.var_type);
-        var ftype = new Values.Type('Function', [stmt.out_type].concat(argTypes));
-        var value = new Values.Function(stmt.block, stmt.out_type, argTypes, stmt.genericTypes, false, stmt.args);
-        this.currentEnv.add(ftype, stmt.name, value);
-
         break;
       case 'if_stmt':
         if(this.eval_expr(stmt.condition).value === true) {
@@ -455,37 +599,6 @@ export class Evaluator {
     if (expr instanceof Values.Value) return expr;
 
     switch(expr.type) {
-      case 'binary_op':
-        // assign
-        if (expr.op === '=') {
-          var right = this.eval_expr(expr.right);
-          var target = this.currentEnv.getVariable(expr.left.name);
-
-          if (expr.left.index) {
-            var index = this.eval_expr(expr.left.index);
-            // TODO: fix
-            if (!(new Values.Type('Integer')).isMatch(index.type)) {
-              throw new Errors.TypeError(`${index} must be Integer`, expr.location);
-            }
-            if (!(new Values.Type('Array')).isMatch(target.type)) {
-              throw new Errors.TypeError(`${expr.left.name} must be Array`, expr.location);
-            }
-
-            if (!target.type.innerTypes[0].isMatch(right.type)) {
-              throw new Errors.TypeError(`type missmatch ${right.type} to ${target.type.innerTypes[0]}`, expr.location);
-            }
-
-            var indexv = index.value;
-            target.value.validateIndex(indexv);
-            target.value.value[index.value] = right;
-          } else {
-            target.set(right, expr.location);
-          }
-
-          return right;
-        } else {
-          return this.eval_binary_op(expr);
-        }
       case 'unary_op_b':
         throw new Errors.ChinoException('Bug');
       case 'unary_op_f':
@@ -508,53 +621,6 @@ export class Evaluator {
         } else {
           return this.currentEnv.get(expr.value);
         }
-      case 'call_function':
-        var name = this.eval_expr(expr.name);
-        var args = expr.args.map((arg) => this.eval_expr(arg));
-
-        var fun = this.currentEnv.get(name);
-        // TODO: 関数であることの型チェック
-
-        try {
-          this.push_env();
-
-          var genericTypes = {};
-          fun.genericTypes.forEach((name) => genericTypes[name] = null);
-
-          for (var i = 0; i < fun.argTypes.length; i++) {
-            var at = fun.argTypes[i];
-
-            var typeName = new Values.Identifier(at.name);
-            if (!at.isMatch(args[i].type, genericTypes)) {
-              throw new Errors.TypeError(`${args[i]} must be ${at}`, args[i].location);
-            }
-          }
-
-          var result;
-          if (fun.isNative) {
-            result = fun.value.apply(null, args);
-          } else {
-            fun.argsDecl.forEach((arg, i) => {
-              var type = arg.var_type.replaceGenericTypes(genericTypes);
-              this.currentEnv.add(type, arg.value, args[i]);
-            });
-            result = this.eval_stmts(fun.value.stmts);
-          }
-
-          if (!(result instanceof Values.Value)) {
-            throw new Errors.ChinoException(`Bug: result of ${name.value}: ${result} is not Value`);
-          }
-
-          var resultType = fun.resultType.replaceGenericTypes(genericTypes);
-          if (!resultType.isMatch(result.type)) {
-            throw new Errors.TypeError(`the result ${result} must be ${fun.resultType}`, expr.location);
-          }
-
-        } finally {
-          this.pop_env();
-        }
-
-        return result;
       case 'array_literal':
         var values = expr.values.map((v) => this.eval_expr(v));
 
@@ -567,54 +633,6 @@ export class Evaluator {
         return new Values.Array(values, expr.innerType);
       default:
         throw `unknown expr ${JSON.stringify(expr)}`
-    }
-  }
-
-  eval_binary_op(expr) {
-    if (expr.op === '&&') {
-      var left = this.eval_expr(expr.left);
-      if (left.value) {
-        var right = this.eval_expr(expr.right);
-        return right;
-      }
-      return new Values.Boolean(false);
-    } else if (expr.op === '||') {
-      var left = this.eval_expr(expr.left);
-      if (!left.value) {
-        var right = this.eval_expr(expr.right);
-        return right;
-      }
-      return new Values.Boolean(true);
-    }
-
-    var left = this.eval_expr(expr.left);
-    var right = this.eval_expr(expr.right);
-
-    switch(expr.op) {
-      // TODO: 型チェック
-      case '>': return new Values.Boolean(left.value > right.value);
-      case '<': return new Values.Boolean(left.value < right.value);
-      case '==': return new Values.Boolean(left.value === right.value);
-      case '>=': return new Values.Boolean(left.value >= right.value);
-      case '<=': return new Values.Boolean(left.value <= right.value);
-      case '!=': return new Values.Boolean(left.value !== right.value);
-
-      case '+': return new Values.Integer(left.value + right.value);
-      case '-': return new Values.Integer(left.value - right.value);
-      case '*': return new Values.Integer(left.value * right.value);
-      case '/': return new Values.Integer(left.value / right.value);
-      case '%': return new Values.Integer(left.value % right.value);
-
-      default: throw `unknown op '${expr.op}'`
-    }
-  }
-
-  eval_unary_op(expr) {
-    var right = this.eval_expr(expr.right);
-
-    switch(expr.op) {
-      case '+': return right; // nothing to do
-      case '-': return new Values.Integer(-right.value);
     }
   }
 }
