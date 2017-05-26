@@ -39,7 +39,7 @@
       else {
         left = binary_op_intr(nodes);
       }
-      return { type: "binary_op", left: left, op: op, right: right, location: location() };
+      return { type: "binary_op", left: left, op: op, right: right, location: location(), left_indexed: left.index ? true : false };
     }
     return binary_op_intr(left.concat(rest));
   }
@@ -51,7 +51,7 @@
 
     var right = { type: "binary_op", left: right_ref, op: op, right: rest[3] };
 
-    return { type: "binary_op", left: left, op: "=", right: right };
+    return { type: "binary_op", left: left, op: "=", right: right, left_indexed: left.index ? true : false };
   }
 
   function def_fun(type, name, generic_types, fst_arg, rest_args, block) {
@@ -62,11 +62,10 @@
   }
 
   function def_var(eternal, type, name, length, init_value) {
-    var node = { eternal: eternal !== null, type: "def_var", var_type: type, name: name };
+    var node = { eternal: eternal !== null, type: "def_var", var_type: type, name: name, init_value: init_value[2] };
     if(length !== null) {
       node.length = length[1];
     }
-    node.init_value = init_value[2];
     return node;
   }
 

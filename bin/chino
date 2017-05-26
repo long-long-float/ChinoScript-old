@@ -24,7 +24,7 @@ else {
   }, ['A']);
 
   try {
-    ChinoScript.evaluate(code, evaluator, false);
+    ChinoScript.evaluate(code, evaluator, true);
   } catch (e) {
     if (e.name === 'ChinoException' && e.location) {
       var l = e.location.start;

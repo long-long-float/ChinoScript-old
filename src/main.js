@@ -22,11 +22,14 @@ export function evaluate(code, evaluator = new Evaluator(), showAST = false) {
     console.log(require('util').inspect(ast, true, 10));
   }
 
-  evaluator.push_env();
-  var retVal = evaluator.eval_stmts(ast);
-  evaluator.pop_env();
+  const vmcode = (new Compiler()).compile(ast);
+  console.log(require('util').inspect(vmcode, true, 10));
 
-  return retVal;
+  // evaluator.push_env();
+  // var retVal = evaluator.eval_stmts(ast);
+  // evaluator.pop_env();
+  //
+  // return retVal;
 }
 
 export function return_(value) {
@@ -152,6 +155,147 @@ class Environment {
         }
       }
     }
+  }
+}
+
+class Compiler {
+  constructor() {
+    this.code = [];
+    this.label_count = 0;
+  }
+
+  compile(ast) {
+    const funcs = ast
+      .filter((node) => node.type === 'def_fun')
+      .map((node) => this.compile_func(node));
+    const topLevel = {
+      type: 'def_fun',
+      out_type: Shortcuts.unit,
+      name: Shortcuts.id('$main'),
+      args: [],
+      block: {
+        type: 'block',
+        stmts: ast.filter((node) => node.type !== 'def_fun')
+      },
+    }
+    funcs.push(this.compile_func(topLevel));
+
+    return funcs;
+  }
+
+  compile_func(node) {
+    const new_node = Object.assign({}, node);
+
+    this.code = [];
+    this.compile_block(node.block);
+    delete new_node.block;
+
+    new_node.code = this.code;
+
+    return new_node
+  }
+
+  compile_block(node) {
+    node.stmts.forEach((stmt) => this.compile_stmt(stmt));
+  }
+
+  compile_stmt(stmt) {
+    if (stmt === null) return;
+
+    switch(stmt.type) {
+      case 'if_stmt':
+        this.compile_expr(stmt.condition);
+        const elseLabel = this.create_label();
+        this.add_op({ type: 'jump_if_not', dest: elseLabel });
+
+        this.compile_block(stmt.iftrue);
+        this.add_op(elseLabel);
+
+        this.compile_block(stmt.iffalse);
+
+        return;
+
+      case 'while_stmt':
+        const headLabel = this.create_label();
+        this.add_op(headLabel);
+
+        this.compile_expr(stmt.condition);
+        const tailLabel = this.create_label();
+        this.add_op({ type: 'jump_if_not', dest: tailLabel });
+
+        this.compile_block(stmt.block);
+        this.add_op({ type: 'jump', dest: headLabel });
+
+        this.add_op(tailLabel);
+
+        return;
+
+      case 'for_stmt':
+        // TODO: implement
+        return;
+
+      case 'return_stmt':
+        this.compile_expr(stmt.value);
+        this.add_op({ type: 'return' });
+        return;
+
+      case 'def_var':
+        this.compile_expr(stmt.init_value);
+        const op = Object.assign({}, stmt)
+        delete op.init_value;
+        this.add_op(op);
+        return;
+
+      default:
+        this.compile_expr(stmt);
+    }
+  }
+
+  compile_expr(expr) {
+    switch(expr.type) {
+      case 'binary_op':
+        this.compile_expr(expr.left);
+        this.compile_expr(expr.right);
+        this.add_op({ type: 'binary_op', op: expr.op, left_indexed: expr.left_indexed })
+
+        return;
+
+      case 'unary_op_f':
+        this.compile_expr(expr.right);
+        this.add_op({ type: 'unary_op_f', op: expr.op })
+        return;
+
+      case 'call_function':
+        expr.args.forEach((arg) => this.compile_expr(arg));
+        this.add_op({ type: 'call_function', name: expr.name })
+        return;
+
+      case 'lh_expression':
+        if (expr.index) {
+          this.compile_expr(expr.index);
+        }
+        this.add_op({ type: 'eval', expr: expr });
+        return;
+
+      case 'array_literal':
+        expr.values.forEach((value) => this.compile_expr(value));
+        this.add_op({ type: 'array_literal', innerType: expr.innerType });
+        return;
+
+      default:
+        this.add_op({ type: 'eval', expr: expr });
+        return;
+    }
+  }
+
+  create_label() {
+    const label = { type: 'label', id: this.label_count };
+    this.label_count++;
+    return label;
+  }
+
+  add_op(op) {
+    this.code.push(op);
   }
 }
 
