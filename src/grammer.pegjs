@@ -66,9 +66,7 @@
     if(length !== null) {
       node.length = length[1];
     }
-    if(init_value !== null) {
-      node.init_value = init_value[2];
-    }
+    node.init_value = init_value[2];
     return node;
   }
 
@@ -153,7 +151,7 @@
 
 program
   = program:(top_statement _ )*
-    { return filter(flatten(program), ["\n", " "]); }
+    { return filter(flatten(program), ["\n", " ", null]); }
 
 top_statement
   = def_fun
@@ -173,7 +171,7 @@ def_fun
     { return def_fun(type, name, generic_types, fst_arg, rest_args, block);  }
 
 def_var
-  = eternal:("eternal" / "†eternal†")? _ type:type _ name:identifier _ length:("[" integer "]")? _ init_value:("=" _  expression)? _ ";"
+  = eternal:("eternal" / "†eternal†")? _ type:type _ name:identifier _ length:("[" integer "]")? _ init_value:("=" _  expression) _ ";"
     { return def_var(eternal, type, name, length, init_value); }
 
 if_stmt
